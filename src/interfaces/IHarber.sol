@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.21;
+pragma solidity ^0.8.22;
 
 interface IHarber {
     // STRUCTS
@@ -33,13 +33,14 @@ interface IHarber {
     event Withdrawal(uint256 indexed tokenId, uint256 amount);
 
     // ERRORS
+    error NotForSale();
     error Unauthorized();
+    error InvalidBid();
     error InsolventToken(uint256 tokenId);
     error InsufficientFunds(uint256 available, uint256 needed);
-    error IncorrectOwner();
 
     // FUNCTIONS
-    function buy(uint256 tokenId) external payable;
+    function buy(uint256 tokenId, uint256 newPrice) external payable;
 
     function relinquish(uint256 tokenId) external;
 
@@ -79,10 +80,6 @@ interface IHarber {
     function isInsolvent(uint256 tokenId) external view returns (bool);
 
     function insolvencyTime(uint256 tokenId) external view returns (uint256);
-
-    // TODO: interface for handling user balances
-    // function getBalance(address account) external view returns (uint256);
-    // function withdraw(address account) external;
 
     // TODO: single token bids vs collection bids
     function placeBid(uint256 maxPrice, uint256 newPrice) external payable returns (uint256);

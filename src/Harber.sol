@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.21;
+pragma solidity ^0.8.22;
 
 import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 
 import {IHarber} from "./interfaces/IHarber.sol";
 
-abstract contract Harber is ERC721, IHarber {
+contract Harber is ERC721, IHarber {
     using Address for address;
 
+    uint256 public immutable totalSupply = 100;
     uint256 public immutable reservePrice;
 
     uint256 public immutable gracePeriod = 24 hours;
@@ -27,6 +28,8 @@ abstract contract Harber is ERC721, IHarber {
 
     uint256 _nonce;
     mapping(uint256 => Bid) _bids;
+
+    uint256 _mintCounter;
 
     modifier onlyAuthorized(uint256 tokenId) {
         _checkAuthorized(ownerOf(tokenId), _msgSender(), tokenId);
@@ -50,8 +53,22 @@ abstract contract Harber is ERC721, IHarber {
         _;
     }
 
-    function buy(uint256 tokenId) external payable virtual override onlyOwnedByContract(tokenId) {
-        // TODO: check if token sales are enabled (targetSupply)
+    constructor(
+        string memory _name,
+        string memory _symbol,
+        uint256 _reservePrice,
+        address _beneficiary
+    ) ERC721(_name, _symbol) {
+        reservePrice = _reservePrice;
+        beneficiary = _beneficiary;
+
+        // TODO: mint batch (ERC2309?)
+        for (uint256 i; i < totalSupply; ++i) {
+            _mint(address(this), _mintCounter++);
+        }
+    }
+
+    function buy(uint256 tokenId, uint256 newPrice) external payable virtual override onlyOwnedByContract(tokenId) {
         if (msg.value < reservePrice) revert InsufficientFunds(msg.value, reservePrice);
 
         _tokenBalances[tokenId] = msg.value - reservePrice;
@@ -59,6 +76,7 @@ abstract contract Harber is ERC721, IHarber {
 
         emit Purchase(tokenId, reservePrice);
         _transfer(address(this), _msgSender(), tokenId);
+        _setPrice(tokenId, newPrice);
     }
 
     function relinquish(uint256 tokenId) external virtual override onlyAuthorized(tokenId) onlySolvent(tokenId) {
@@ -71,9 +89,7 @@ abstract contract Harber is ERC721, IHarber {
         uint256 newPrice
     ) external virtual override onlyAuthorized(tokenId) onlySolvent(tokenId) {
         _settle(tokenId);
-        _prices[tokenId] = newPrice;
-
-        emit PriceChange(tokenId, newPrice);
+        _setPrice(tokenId, newPrice);
     }
 
     function getPrice(uint256 tokenId) external view virtual override returns (uint256) {
@@ -147,6 +163,8 @@ abstract contract Harber is ERC721, IHarber {
         uint256 id = _nonce++;
         address bidder = _msgSender();
 
+        // if (bidder == address(0)) revert InvalidBid();
+
         _bids[id] = Bid({
             timestamp: uint96(block.timestamp),
             bidder: bidder,
@@ -165,11 +183,13 @@ abstract contract Harber is ERC721, IHarber {
 
     function executeBid(uint256 id, uint256 tokenId) external virtual override onlySolvent(tokenId) {
         Bid memory bid = _bids[id];
+        if (bid.bidder == address(0)) revert InvalidBid();
+
         address owner = ownerOf(tokenId);
 
         // TODO: restrict to bidder or admin (?)
         bool authorized = _msgSender() == owner ||
-            (bid.maxPrice >= _prices[tokenId] && bid.timestamp + gracePeriod > block.timestamp);
+            (bid.maxPrice >= _prices[tokenId] && bid.timestamp + gracePeriod <= block.timestamp);
         if (!authorized) revert Unauthorized();
 
         _settle(tokenId);
@@ -189,6 +209,8 @@ abstract contract Harber is ERC721, IHarber {
 
     function cancelBid(uint256 id) external virtual override {
         Bid memory bid = _bids[id];
+        if (bid.bidder == address(0)) revert InvalidBid();
+
         if (_msgSender() != bid.bidder) revert Unauthorized();
 
         delete _bids[id];
@@ -213,6 +235,11 @@ abstract contract Harber is ERC721, IHarber {
 
     function _calculateFee(uint256 price, uint256 duration) internal view virtual returns (uint256) {
         return (price * duration * feeRate) / (feePeriod * feeDenominator);
+    }
+
+    function _setPrice(uint256 tokenId, uint256 newPrice) internal virtual {
+        _prices[tokenId] = newPrice;
+        emit PriceChange(tokenId, newPrice);
     }
 
     function _settle(uint256 tokenId) internal {
